@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__ide__getDiagnostics",
+      "Bash(./gradlew assembleDebug)",
+      "Bash(unzip -l MercuryAndroidSDK-v0.2.5-20260212110627_ceaebc13.aar)",
+      "Bash(python3 -c \"import zipfile; z=zipfile.ZipFile\\('MercuryAndroidSDK-v0.2.5-20260212110627_ceaebc13.aar'\\); print\\('\\\\n'.join\\(z.namelist\\(\\)\\)\\)\")",
+      "Bash(powershell -Command 'Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip = [System.IO.Compression.ZipFile]::OpenRead\\('\\\\''D:/Android/Android Project/GlassTest/app/libs/MercuryAndroidSDK-v0.2.5-20260212110627_ceaebc13.aar'\\\\''\\); $zip.Entries | ForEach-Object { $_.FullName }')",
+      "Read(//tmp/aar_extract/**)",
+      "Bash(powershell -Command \"Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory\\('classes.jar', 'classes'\\)\")",
+      "Bash(javap -p /tmp/aar_extract/extracted/classes/com/ffalcon/mercury/android/sdk/ui/activity/BaseMirrorActivity.class)",
+      "Bash(javap -p /tmp/aar_extract/extracted/classes/com/ffalcon/mercury/android/sdk/MercurySDK.class)",
+      "Bash(javap:*)",
+      "Bash(adb devices:*)",
+      "Bash(adb -s emulator-5554 shell am start -n com.example.glasstest/.ui.activity.capture.DrugCaptureActivity)",
+      "Bash(adb -s emulator-5554 logcat -d)"
+    ]
+  }
+}

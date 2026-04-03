@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 联网权限：手机作为 HTTP 服务端，眼镜作为客户端，双方通过热点局域网通信 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- 查询当前连接的网络信息，用于获取本机 IP 地址显示给用户 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- 前台服务权限：保证 App 切换到后台或锁屏时 HTTP 服务不被系统杀掉 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!--
+        前台服务类型声明（Android 14+ 必须）：
+        remoteMessaging 表示该服务用于接收来自远端设备（眼镜）的数据，
+        语义上最符合本场景，且无需申请敏感权限（如 camera、location）。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+
+    <!-- Android 13+ 发送通知需要运行时权限，由 MainActivity 在运行时申请 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Test">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.Test">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            HTTP 服务以前台服务形式运行：
+            - exported=false：外部 App 无法直接启动此服务，仅限本 App 内部调用
+            - foregroundServiceType：Android 14+ 必须声明服务类型
+        -->
+        <service
+            android:name=".service.HttpServerService"
+            android:exported="false"
+            android:foregroundServiceType="remoteMessaging" />
+
+    </application>
+
+</manifest>

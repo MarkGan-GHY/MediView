@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew assembleDebug)",
+      "Read(//c/Users/甘浩扬/AppData/Roaming/gradle/**)",
+      "Read(//c/Users/甘浩扬/.gradle/**)",
+      "Bash(curl:*)",
+      "Read(//d/Android/Android Project/Test/$USERPROFILE/.gradle/**)",
+      "Read(//d/Android/Android Project/Test/$HOME/.gradle/**)"
+    ]
+  }
+}
