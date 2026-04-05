@@ -14,7 +14,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.GlassTest"
+        android:theme="@style/Theme.glass_app"
         android:usesCleartextTraffic="true">
 
         <meta-data
@@ -36,7 +36,7 @@
             android:name=".MainActivity"
             android:exported="false"
             android:label="@string/app_name"
-            android:theme="@style/Theme.GlassTest" />
+            android:theme="@style/Theme.glass_app" />
 
     </application>
 

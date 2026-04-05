@@ -38,6 +38,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "GlassTest"
+rootProject.name = "glass_app"
 include(":app")
  
