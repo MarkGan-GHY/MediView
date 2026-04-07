@@ -38,6 +38,7 @@ import com.example.test.network.ApiConfigDialog
 import com.example.test.network.DeleteConfirmDialog
 import com.example.test.network.NetworkViewModel
 import com.example.test.network.PromptEditDialog
+import com.example.test.network.TestResult
 
 @Composable
 fun NetworkScreen() {
@@ -161,7 +162,9 @@ fun NetworkScreen() {
                             onEdit = { viewModel.showEditDialog(config) },
                             onDelete = { viewModel.showDeleteDialog(config.id) },
                             onSetDefault = { viewModel.setDefault(config.id) },
-                            onToggleEnabled = { viewModel.toggleEnabled(config.id) }
+                            onToggleEnabled = { viewModel.toggleEnabled(config.id) },
+                            onTest = { viewModel.testConfig(config) },
+                            testResult = uiState.testResults[config.id] ?: TestResult.Idle
                         )
                     }
                 }

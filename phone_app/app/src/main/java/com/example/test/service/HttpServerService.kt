@@ -11,6 +11,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.test.MainActivity
 import com.example.test.R
+import com.example.test.data.NetworkRepository
 import com.example.test.server.LocalHttpServer
 
 /**
@@ -47,6 +48,10 @@ class HttpServerService : Service() {
     }
 
     private var httpServer: LocalHttpServer? = null
+
+    // NetworkRepository 和 LlmApiService 懒加载，Application context 在 onCreate 后可用
+    private val repository by lazy { NetworkRepository(applicationContext) }
+    private val llmApiService by lazy { LlmApiService(repository) }
 
     // -------------------------------------------------------------------------
     // 生命周期
@@ -92,8 +97,8 @@ class HttpServerService : Service() {
         httpServer = LocalHttpServer(
             context = applicationContext,
             port = SERVER_PORT,
+            llmApiService = llmApiService,
             onRequestReceived = { imageSize, savePath ->
-                // 此回调在 NanoHTTPD 工作线程中执行，通过广播通知 Activity 更新 UI
                 broadcastRequestReceived(imageSize, savePath)
             }
         )

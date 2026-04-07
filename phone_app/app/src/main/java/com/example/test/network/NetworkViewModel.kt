@@ -5,6 +5,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.test.data.ApiConfig
 import com.example.test.data.NetworkRepository
+import com.example.test.service.ConnectionTestService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,12 +20,14 @@ data class NetworkUiState(
     val editingConfig: ApiConfig? = null,
     val showDeleteDialog: Boolean = false,
     val deletingConfigId: String? = null,
-    val showPromptDialog: Boolean = false
+    val showPromptDialog: Boolean = false,
+    val testResults: Map<String, TestResult> = emptyMap()
 )
 
 class NetworkViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = NetworkRepository(application)
+    private val testService = ConnectionTestService()
 
     private val _uiState = MutableStateFlow(NetworkUiState())
     val uiState: StateFlow<NetworkUiState> = _uiState.asStateFlow()
@@ -129,6 +133,20 @@ class NetworkViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.saveGlobalPrompt(prompt)
             _uiState.update { it.copy(showPromptDialog = false) }
+        }
+    }
+
+    // ---- 连接测试 ----
+
+    fun testConfig(config: ApiConfig) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.update {
+                it.copy(testResults = it.testResults + (config.id to TestResult.Loading))
+            }
+            val result = testService.test(config)
+            _uiState.update {
+                it.copy(testResults = it.testResults + (config.id to result))
+            }
         }
     }
 }

@@ -7,6 +7,8 @@ import com.google.gson.Gson
 import fi.iki.elonen.NanoHTTPD
 import java.io.File
 import java.io.IOException
+import kotlinx.coroutines.runBlocking
+import com.example.test.service.LlmApiService
 
 /**
  * 手机端本地 HTTP 服务器。
@@ -26,6 +28,8 @@ import java.io.IOException
 class LocalHttpServer(
     private val context: Context,
     port: Int,
+    /** 真实大模型调用服务；传 null 时回退到模拟数据（方便无配置时测试）*/
+    private val llmApiService: LlmApiService? = null,
     /** 每次收到请求时的回调，用于向 UI 层广播事件（在子线程调用） */
     private val onRequestReceived: (imageSize: Int, savePath: String) -> Unit
 ) : NanoHTTPD("0.0.0.0", port) {
@@ -85,9 +89,13 @@ class LocalHttpServer(
             // 通知 UI 层（在工作线程，UI 层需切换到主线程更新）
             onRequestReceived(imageBytes.size, savedPath)
 
-            // 构建并返回模拟识别结果
-            // ↑ 后续接入真实模型时，替换此处调用即可，接口签名不变
-            val response = buildMockResponse()
+            // 调用大模型（有配置时）或返回模拟数据（无配置时）
+            // runBlocking 在 NanoHTTPD 工作线程中安全使用，不阻塞主线程
+            val response = if (llmApiService != null) {
+                runBlocking { llmApiService.analyze(imageBytes) }
+            } else {
+                buildMockResponse()
+            }
             val json = gson.toJson(response)
             Log.i(TAG, "返回结果: $json")
 

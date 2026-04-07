@@ -75,4 +75,7 @@ dependencies {
 
     // Material Icons Extended（MoreVert、Visibility 等）
     implementation("androidx.compose.material:material-icons-extended")
+
+    // OkHttp：调用大模型 API 的 HTTP 客户端
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
