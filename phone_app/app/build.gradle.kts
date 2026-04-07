@@ -62,4 +62,17 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+
+    //Navigation组件
+    implementation("androidx.navigation:navigation-compose:2.7.7")
+    implementation("androidx.compose.material3:material3")
+
+    // ViewModel Compose 支持（viewModel() 函数）
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.5")
+
+    // DataStore 本地持久化
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // Material Icons Extended（MoreVert、Visibility 等）
+    implementation("androidx.compose.material:material-icons-extended")
 }

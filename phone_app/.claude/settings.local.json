@@ -6,7 +6,8 @@
       "Read(//c/Users/甘浩扬/.gradle/**)",
       "Bash(curl:*)",
       "Read(//d/Android/Android Project/Test/$USERPROFILE/.gradle/**)",
-      "Read(//d/Android/Android Project/Test/$HOME/.gradle/**)"
+      "Read(//d/Android/Android Project/Test/$HOME/.gradle/**)",
+      "mcp__ide__getDiagnostics"
     ]
   }
 }
