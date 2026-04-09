@@ -62,11 +62,22 @@ class LlmApiService(private val repository: NetworkRepository) {
     /**
      * 发送图片到大模型并返回识别结果。
      * 在 IO 线程执行，可安全地从 runBlocking 调用（NanoHTTPD 工作线程）。
+     *
+     * @param onLog 日志回调 (message, level)，在调用线程触发，由上层广播到 UI
      */
-    suspend fun analyze(imageBytes: ByteArray): DrugAnalyzeResponse = withContext(Dispatchers.IO) {
+    suspend fun analyze(
+        imageBytes: ByteArray,
+        onLog: (message: String, level: String) -> Unit = { _, _ -> }
+    ): DrugAnalyzeResponse = withContext(Dispatchers.IO) {
         val configs = repository.configsFlow.first()
         val config = configs.firstOrNull { it.isDefault && it.enabled }
-            ?: return@withContext errorResponse("未找到可用的默认 API 配置，请在「网络设置」中配置并设为默认")
+            ?: run {
+                val msg = "无可用的默认 API 配置，请在「网络设置」中配置并设为默认"
+                onLog(msg, "WARN")
+                return@withContext errorResponse(msg)
+            }
+
+        onLog("开始调用大模型：${config.name}（${config.model}）", "INFO")
 
         val basePrompt = config.promptTemplate.takeIf { it.isNotBlank() }
             ?: repository.globalPromptFlow.first()
@@ -74,15 +85,24 @@ class LlmApiService(private val repository: NetworkRepository) {
 
         val base64Image = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
 
-        try {
-            when (config.requestFormatType) {
+        val startMs = System.currentTimeMillis()
+        return@withContext try {
+            val result = when (config.requestFormatType) {
                 RequestFormatType.OPENAI_COMPATIBLE,
                 RequestFormatType.CUSTOM -> callOpenAiCompatible(config, fullPrompt, base64Image)
                 RequestFormatType.QWEN   -> callQwen(config, fullPrompt, base64Image)
                 RequestFormatType.GEMINI -> callGemini(config, fullPrompt, base64Image)
             }
+            val elapsed = "%.1f".format((System.currentTimeMillis() - startMs) / 1000.0)
+            if (result.success) {
+                onLog("识别完成，耗时 ${elapsed}s：${result.drugName}（置信度 ${"%.0f".format(result.confidence * 100)}%）", "INFO")
+            } else {
+                onLog("大模型返回失败：${result.warningText}", "ERROR")
+            }
+            result
         } catch (e: Exception) {
             Log.e(TAG, "LLM 调用失败", e)
+            onLog("大模型调用异常：${e.message}", "ERROR")
             errorResponse("识别失败：${e.message}")
         }
     }

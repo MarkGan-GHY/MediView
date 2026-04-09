@@ -41,14 +41,23 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+enum class LogLevel { INFO, WARN, ERROR }
+data class LogEntry(val text: String, val level: LogLevel = LogLevel.INFO)
+
 @Composable
 fun ServiceScreen() {
     val context = LocalContext.current
 
     var isServerRunning by remember { mutableStateOf(false) }
     var localIp by remember { mutableStateOf("获取中...") }
-    val logMessages = remember { mutableStateListOf<String>() }
+    val logMessages = remember { mutableStateListOf<LogEntry>() }
     val listState = rememberLazyListState()
+
+    fun addLog(text: String, level: LogLevel = LogLevel.INFO) {
+        val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        logMessages.add(0, LogEntry("[$timestamp] $text", level))
+        if (logMessages.size > 100) logMessages.removeAt(logMessages.lastIndex)
+    }
 
     LaunchedEffect(Unit) {
         localIp = getLocalIpAddress()
@@ -57,15 +66,30 @@ fun ServiceScreen() {
     DisposableEffect(Unit) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
-                val size = intent.getIntExtra(HttpServerService.EXTRA_IMAGE_SIZE, 0)
-                val path = intent.getStringExtra(HttpServerService.EXTRA_SAVE_PATH) ?: ""
-                val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-                val fileName = path.substringAfterLast('/')
-                logMessages.add(0, "[$timestamp] 收到图片 ${size}B → $fileName")
-                if (logMessages.size > 50) logMessages.removeAt(logMessages.lastIndex)
+                when (intent.action) {
+                    HttpServerService.BROADCAST_REQUEST_RECEIVED -> {
+                        val size = intent.getIntExtra(HttpServerService.EXTRA_IMAGE_SIZE, 0)
+                        val path = intent.getStringExtra(HttpServerService.EXTRA_SAVE_PATH) ?: ""
+                        val fileName = path.substringAfterLast('/')
+                        addLog("收到图片 ${size}B → $fileName")
+                    }
+                    HttpServerService.BROADCAST_LOG_EVENT -> {
+                        val msg = intent.getStringExtra(HttpServerService.EXTRA_LOG_MESSAGE) ?: return
+                        val levelStr = intent.getStringExtra(HttpServerService.EXTRA_LOG_LEVEL) ?: "INFO"
+                        val level = when (levelStr) {
+                            "WARN"  -> LogLevel.WARN
+                            "ERROR" -> LogLevel.ERROR
+                            else    -> LogLevel.INFO
+                        }
+                        addLog(msg, level)
+                    }
+                }
             }
         }
-        val filter = IntentFilter(HttpServerService.BROADCAST_REQUEST_RECEIVED)
+        val filter = IntentFilter().apply {
+            addAction(HttpServerService.BROADCAST_REQUEST_RECEIVED)
+            addAction(HttpServerService.BROADCAST_LOG_EVENT)
+        }
         ContextCompat.registerReceiver(
             context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED
         )
@@ -92,7 +116,7 @@ fun ServiceScreen() {
                 onClick = {
                     startHttpServer(context)
                     isServerRunning = true
-                    logMessages.add(0, "[系统] HTTP 服务已启动，端口 ${HttpServerService.SERVER_PORT}")
+                    addLog("HTTP 服务启动中，端口 ${HttpServerService.SERVER_PORT}...")
                 },
                 enabled = !isServerRunning,
                 modifier = Modifier.weight(1f)
@@ -103,7 +127,6 @@ fun ServiceScreen() {
                 onClick = {
                     stopHttpServer(context)
                     isServerRunning = false
-                    logMessages.add(0, "[系统] HTTP 服务已停止")
                 },
                 enabled = isServerRunning,
                 colors = ButtonDefaults.buttonColors(
@@ -147,11 +170,17 @@ fun ServiceScreen() {
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                items(logMessages) { msg ->
+                items(logMessages) { entry ->
+                    val color = when (entry.level) {
+                        LogLevel.WARN  -> Color(0xFFF57F17)  // amber
+                        LogLevel.ERROR -> MaterialTheme.colorScheme.error
+                        LogLevel.INFO  -> MaterialTheme.colorScheme.onSurface
+                    }
                     Text(
-                        msg,
+                        entry.text,
                         style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = FontFamily.Monospace,
+                        color = color
                     )
                 }
             }

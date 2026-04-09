@@ -31,6 +31,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.glasstest.databinding.ActivityDrugCaptureBinding
+import com.example.glasstest.network.PhoneServiceDiscovery
 import com.ffalcon.mercury.android.sdk.touch.TempleAction
 import com.ffalcon.mercury.android.sdk.ui.activity.BaseMirrorActivity
 import com.ffalcon.mercury.android.sdk.ui.toast.FToast
@@ -49,10 +50,6 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "DrugCapture"
-
-// 手机热点实际 IP 地址
-private const val SERVER_HOST = "10.112.9.191"
-private const val SERVER_URL = "http://$SERVER_HOST:8080/analyzeDrug"
 
 // ★ BaseMirrorActivity 泛型参数为 ViewBinding 类名，需根据本地 SDK 调整
 class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
@@ -84,6 +81,13 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
+    // NSD 服务发现，动态获取手机 host:port
+    // lazy 延迟初始化：Activity 构造时 attachBaseContext 尚未调用，getSystemService 会 NPE
+    private val phoneDiscovery by lazy { PhoneServiceDiscovery(this) }
+
+    @Volatile private var phoneHost: String? = null
+    @Volatile private var phonePort: Int = 8080
+
     // ──────────────── 状态 ────────────────
     private var isProcessing = false
 
@@ -96,6 +100,7 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
         backHandlerThread.start()
         setupTempleActions()
         setupCameraPreview()
+        startServiceDiscovery()
 
         // 左眼初始化提示文本（仅左眼设置，符合 setLeft 使用规范）
         mBindingPair.setLeft {
@@ -110,8 +115,45 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
 
     override fun onDestroy() {
         super.onDestroy()
+        phoneDiscovery.stop()
         backHandlerThread.quitSafely()
         httpClient.dispatcher.executorService.shutdown()
+    }
+
+    // ════════════════════════════════════════
+    //  NSD 服务发现
+    // ════════════════════════════════════════
+
+    private fun startServiceDiscovery() {
+        // 初始显示搜索提示
+        mBindingPair.updateView {
+            tvCaptureHint.text = "正在搜索手机服务..."
+        }
+
+        phoneDiscovery.start(object : PhoneServiceDiscovery.Listener {
+            override fun onPhoneFound(host: String, port: Int) {
+                phoneHost = host
+                phonePort = port
+                Log.i(TAG, "手机服务已发现: $host:$port")
+                runOnUiThread {
+                    mBindingPair.updateView {
+                        tvCaptureHint.text = "单击拍照 / 双击退出"
+                    }
+                    FToast.show("已连接手机服务")
+                }
+            }
+
+            override fun onPhoneLost() {
+                phoneHost = null
+                Log.w(TAG, "手机服务已消失，清除缓存地址")
+                runOnUiThread {
+                    mBindingPair.updateView {
+                        tvCaptureHint.text = "正在搜索手机服务..."
+                    }
+                    FToast.show("手机服务已断开，重新搜索中...")
+                }
+            }
+        })
     }
 
     // ════════════════════════════════════════
@@ -355,11 +397,16 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
      */
     private suspend fun sendToPhone(jpegBytes: ByteArray): DrugResponse =
         withContext(Dispatchers.IO) {
+            val host = phoneHost
+            if (host == null) {
+                return@withContext DrugResponse.Failure("尚未发现手机服务，请稍候")
+            }
+            val url = "http://$host:$phonePort/analyzeDrug"
             try {
-                Log.d(TAG, "HTTP请求发送，图片字节大小=${jpegBytes.size}")
+                Log.d(TAG, "HTTP请求发送: url=$url, 图片字节大小=${jpegBytes.size}")
                 val body = jpegBytes.toRequestBody("image/jpeg".toMediaType())
                 val request = Request.Builder()
-                    .url(SERVER_URL)
+                    .url(url)
                     .post(body)
                     .build()
 
@@ -391,14 +438,14 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
                 )
             } catch (e: java.net.ConnectException) {
                 Log.e(TAG, "连接失败: ${e.message}")
-                DrugResponse.Failure("网络连接失败，请确认手机热点已开启且服务正在运行")
+                DrugResponse.NetworkFailure("网络连接失败，请确认手机热点已开启且服务正在运行")
             } catch (e: java.net.SocketTimeoutException) {
                 Log.e(TAG, "请求超时: ${e.message}")
                 val msg = if (e.message?.contains("connect") == true)
                     "连接超时（5s），手机服务端可能未启动"
                 else
                     "读取超时（15s），手机服务端处理过慢或无响应"
-                DrugResponse.Failure(msg)
+                DrugResponse.NetworkFailure(msg)
             } catch (e: org.json.JSONException) {
                 Log.e(TAG, "JSON解析异常: ${e.message}")
                 DrugResponse.Failure("返回数据格式错误，请检查手机服务版本")
@@ -419,7 +466,10 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
     /** 网络请求结果：成功或各类失败 */
     sealed class DrugResponse {
         data class Success(val result: DrugResult) : DrugResponse()
+        /** 业务层失败（服务端返回错误、JSON 解析失败等），不触发重连 */
         data class Failure(val toast: String) : DrugResponse()
+        /** 网络层失败（连接拒绝、超时），触发清除缓存地址并重新发现 */
+        data class NetworkFailure(val toast: String) : DrugResponse()
     }
 
     // ════════════════════════════════════════
@@ -456,6 +506,18 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
                     mBindingPair.updateView {
                         tvStatus.visibility = View.GONE
                     }
+                }
+                is DrugResponse.NetworkFailure -> {
+                    // 网络层失败：清除缓存地址，重新发现
+                    phoneHost = null
+                    Log.w(TAG, "网络失败，清除缓存地址，重新发现服务")
+                    FToast.show(response.toast)
+                    mBindingPair.updateView {
+                        tvStatus.visibility = View.GONE
+                        tvCaptureHint.text = "正在搜索手机服务..."
+                    }
+                    phoneDiscovery.stop()
+                    startServiceDiscovery()
                 }
                 is DrugResponse.Success -> {
                     val result = response.result

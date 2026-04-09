@@ -6,25 +6,23 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import com.example.test.MainActivity
 import com.example.test.R
 import com.example.test.data.NetworkRepository
-import com.example.test.server.LocalHttpServer
+import com.example.test.network.local.PhoneBridgeServiceController
 
 /**
  * HTTP 服务的宿主：Android 前台服务。
  *
- * 为什么要用前台服务（而非普通 Service 或后台线程）？
- * - Android 的后台进程管理会在内存不足时杀死后台应用
- * - 前台服务会显示一条持久通知，系统将其视为"用户感知"的任务，不会随意杀死
- * - 这保证了眼镜端在任何时候都能与手机建立 HTTP 连接
- *
  * 生命周期：
- *   startForegroundService(ACTION_START) → onCreate → onStartCommand → HTTP 服务启动
- *   startService(ACTION_STOP)            → onStartCommand → HTTP 服务停止 → stopSelf()
+ *   startForegroundService(ACTION_START) → onCreate → onStartCommand → controller.start()
+ *   startService(ACTION_STOP)            → onStartCommand → controller.stop() → stopSelf()
  */
 class HttpServerService : Service() {
 
@@ -37,9 +35,14 @@ class HttpServerService : Service() {
         /** 广播 Action：通知 Activity 有新的图片请求到达 */
         const val BROADCAST_REQUEST_RECEIVED = "com.example.test.REQUEST_RECEIVED"
 
+        /** 广播 Action：通用日志事件，覆盖服务生命周期、LLM 调用等全链路 */
+        const val BROADCAST_LOG_EVENT = "com.example.test.LOG_EVENT"
+
         /** 广播 Extra Key */
         const val EXTRA_IMAGE_SIZE = "image_size"
         const val EXTRA_SAVE_PATH = "save_path"
+        const val EXTRA_LOG_MESSAGE = "log_message"
+        const val EXTRA_LOG_LEVEL = "log_level"   // "INFO" | "WARN" | "ERROR"
 
         const val SERVER_PORT = 8080
 
@@ -47,9 +50,9 @@ class HttpServerService : Service() {
         private const val CHANNEL_ID = "http_server_channel"
     }
 
-    private var httpServer: LocalHttpServer? = null
+    private var controller: PhoneBridgeServiceController? = null
 
-    // NetworkRepository 和 LlmApiService 懒加载，Application context 在 onCreate 后可用
+    // llmApiService 在主线程（Service onCreate 后）初始化，避免在 IO 线程初始化 DataStore
     private val repository by lazy { NetworkRepository(applicationContext) }
     private val llmApiService by lazy { LlmApiService(repository) }
 
@@ -64,58 +67,58 @@ class HttpServerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startHttpServer()
-            ACTION_STOP -> stopHttpServer()
+            ACTION_START -> startServer()
+            ACTION_STOP -> stopServer()
         }
-        // START_NOT_STICKY：服务被杀后不自动重启，需用户或眼镜端手动重启
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        httpServer?.stop()
-        httpServer = null
-        Log.i(TAG, "HttpServerService 销毁，HTTP 服务已停止")
+        controller?.stop()
+        controller = null
+        Log.i(TAG, "HttpServerService 销毁，服务已停止")
     }
 
-    /** 本服务不提供 Binder 绑定接口，通过 Intent + 广播与 Activity 通信 */
     override fun onBind(intent: Intent?): IBinder? = null
 
     // -------------------------------------------------------------------------
-    // HTTP 服务启停
+    // 启停
     // -------------------------------------------------------------------------
 
-    private fun startHttpServer() {
-        if (httpServer?.isAlive == true) {
-            Log.w(TAG, "HTTP 服务已在运行，忽略重复启动")
+    private fun startServer() {
+        if (controller?.isServerRunning == true) {
+            Log.w(TAG, "服务已在运行，忽略重复启动")
             return
         }
 
-        // 必须在启动子线程之前调用 startForeground，否则 Android 会 ANR
-        startForeground(NOTIFICATION_ID, buildNotification())
+        // Android 14+ 要求 startForeground 必须指定 foregroundServiceType
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            buildNotification(),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING
+        )
 
-        httpServer = LocalHttpServer(
+        controller = PhoneBridgeServiceController(
             context = applicationContext,
             port = SERVER_PORT,
             llmApiService = llmApiService,
             onRequestReceived = { imageSize, savePath ->
                 broadcastRequestReceived(imageSize, savePath)
+            },
+            onLogEvent = { message, level ->
+                broadcastLog(message, level)
             }
         )
-
-        try {
-            httpServer!!.start()
-            Log.i(TAG, "HTTP 服务已启动，端口: $SERVER_PORT")
-        } catch (e: Exception) {
-            Log.e(TAG, "HTTP 服务启动失败", e)
-            stopSelf()
-        }
+        controller!!.start()
     }
 
-    private fun stopHttpServer() {
-        httpServer?.stop()
-        httpServer = null
-        Log.i(TAG, "HTTP 服务已手动停止")
+    private fun stopServer() {
+        controller?.stop()
+        controller = null
+        Log.i(TAG, "服务已手动停止")
+        broadcastLog("服务已停止")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -128,7 +131,15 @@ class HttpServerService : Service() {
         val intent = Intent(BROADCAST_REQUEST_RECEIVED).apply {
             putExtra(EXTRA_IMAGE_SIZE, imageSize)
             putExtra(EXTRA_SAVE_PATH, savePath)
-            // 限定广播只在本 App 内部接收，防止外部 App 监听
+            setPackage(packageName)
+        }
+        sendBroadcast(intent)
+    }
+
+    fun broadcastLog(message: String, level: String = "INFO") {
+        val intent = Intent(BROADCAST_LOG_EVENT).apply {
+            putExtra(EXTRA_LOG_MESSAGE, message)
+            putExtra(EXTRA_LOG_LEVEL, level)
             setPackage(packageName)
         }
         sendBroadcast(intent)
@@ -142,7 +153,7 @@ class HttpServerService : Service() {
         val channel = NotificationChannel(
             CHANNEL_ID,
             "HTTP 药物识别服务",
-            NotificationManager.IMPORTANCE_LOW  // LOW：静音，不振动，不弹出
+            NotificationManager.IMPORTANCE_LOW
         ).apply {
             description = "保持手机与眼镜之间的 HTTP 通信通道"
         }
@@ -151,7 +162,6 @@ class HttpServerService : Service() {
     }
 
     private fun buildNotification(): Notification {
-        // 点击通知时跳转回主界面
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
@@ -163,7 +173,7 @@ class HttpServerService : Service() {
             .setContentText("正在监听端口 $SERVER_PORT，等待眼镜端连接")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)
-            .setOngoing(true)   // 用户无法手动滑掉此通知
+            .setOngoing(true)
             .build()
     }
 }

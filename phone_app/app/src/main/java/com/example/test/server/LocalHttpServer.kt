@@ -7,8 +7,10 @@ import com.google.gson.Gson
 import fi.iki.elonen.NanoHTTPD
 import java.io.File
 import java.io.IOException
-import kotlinx.coroutines.runBlocking
 import com.example.test.service.LlmApiService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 /**
  * 手机端本地 HTTP 服务器。
@@ -31,7 +33,9 @@ class LocalHttpServer(
     /** 真实大模型调用服务；传 null 时回退到模拟数据（方便无配置时测试）*/
     private val llmApiService: LlmApiService? = null,
     /** 每次收到请求时的回调，用于向 UI 层广播事件（在子线程调用） */
-    private val onRequestReceived: (imageSize: Int, savePath: String) -> Unit
+    private val onRequestReceived: (imageSize: Int, savePath: String) -> Unit,
+    /** 日志回调 (message, level)，由上层广播到 UI */
+    private val onLogEvent: (message: String, level: String) -> Unit = { _, _ -> }
 ) : NanoHTTPD("0.0.0.0", port) {
 
     companion object {
@@ -47,7 +51,11 @@ class LocalHttpServer(
      * NanoHTTPD 的请求入口，所有 HTTP 请求都经过此方法分发。
      */
     override fun serve(session: IHTTPSession): Response {
+        val remoteIp = session.headers["http-client-ip"]
+            ?: session.headers["remote-addr"]
+            ?: "未知IP"
         Log.i(TAG, "收到请求: ${session.method} ${session.uri}")
+        onLogEvent("收到连接：$remoteIp  ${session.method} ${session.uri}", "INFO")
 
         return when {
             session.method == Method.POST && session.uri == ROUTE_ANALYZE -> {
@@ -77,32 +85,49 @@ class LocalHttpServer(
     private fun handleAnalyzeDrug(session: IHTTPSession): Response {
         return try {
             val contentLength = session.headers["content-length"]?.toIntOrNull() ?: 0
+            if (contentLength <= 0) {
+                onLogEvent("图片读取异常：content-length 为 0 或缺失", "WARN")
+            }
             Log.i(TAG, "图片大小: $contentLength 字节")
 
             // 直接从 inputStream 读取原始图片字节，避免 parseBody() 的临时文件开销
             val imageBytes = readImageBytes(session, contentLength)
 
+            val sizeKb = "%.1f".format(imageBytes.size / 1024.0)
+            onLogEvent("收到图片 ${sizeKb}KB（${imageBytes.size}B）", "INFO")
+
             // 保存到缓存目录，便于 adb pull 调试，后续可删除此步骤
             val savedPath = saveImageToCache(imageBytes)
+            val fileName = savedPath.substringAfterLast('/')
             Log.i(TAG, "图片已保存: $savedPath")
+            onLogEvent("图片已保存：$fileName", "INFO")
 
             // 通知 UI 层（在工作线程，UI 层需切换到主线程更新）
             onRequestReceived(imageBytes.size, savedPath)
 
             // 调用大模型（有配置时）或返回模拟数据（无配置时）
-            // runBlocking 在 NanoHTTPD 工作线程中安全使用，不阻塞主线程
             val response = if (llmApiService != null) {
-                runBlocking { llmApiService.analyze(imageBytes) }
+                runBlocking(Dispatchers.IO) {
+                    llmApiService.analyze(imageBytes, onLog = onLogEvent)
+                }
             } else {
+                onLogEvent("未配置大模型，使用模拟数据", "WARN")
                 buildMockResponse()
             }
             val json = gson.toJson(response)
             Log.i(TAG, "返回结果: $json")
 
+            if (response.success) {
+                onLogEvent("返回结果给眼镜：${response.drugName}（置信度 ${"%.0f".format(response.confidence * 100)}%）", "INFO")
+            } else {
+                onLogEvent("返回错误响应给眼镜：${response.warningText}", "ERROR")
+            }
+
             newFixedLengthResponse(Response.Status.OK, MIME_JSON, json)
 
         } catch (e: IOException) {
             Log.e(TAG, "处理请求时发生 IO 错误", e)
+            onLogEvent("IO 错误：${e.message}", "ERROR")
             newFixedLengthResponse(
                 Response.Status.INTERNAL_ERROR,
                 MIME_JSON,

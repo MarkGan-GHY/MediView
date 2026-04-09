@@ -7,7 +7,16 @@
       "Bash(curl:*)",
       "Read(//d/Android/Android Project/Test/$USERPROFILE/.gradle/**)",
       "Read(//d/Android/Android Project/Test/$HOME/.gradle/**)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(adb devices:*)",
+      "Bash(adb logcat:*)",
+      "Bash(adb shell:*)",
+      "Bash(adb install:*)",
+      "Bash(xargs grep:*)",
+      "Bash(kill %1)",
+      "Bash(adb connect:*)",
+      "Bash(adb:*)",
+      "Bash(./gradlew compileDebugKotlin)"
     ]
   }
 }
