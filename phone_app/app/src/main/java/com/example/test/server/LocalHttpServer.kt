@@ -118,9 +118,9 @@ class LocalHttpServer(
             Log.i(TAG, "返回结果: $json")
 
             if (response.success) {
-                onLogEvent("返回结果给眼镜：${response.drugName}（置信度 ${"%.0f".format(response.confidence * 100)}%）", "INFO")
+                onLogEvent("返回结果给眼镜：${response.drugName}", "INFO")
             } else {
-                onLogEvent("返回错误响应给眼镜：${response.warningText}", "ERROR")
+                onLogEvent("返回错误响应给眼镜：${response.contraindications}", "ERROR")
             }
 
             newFixedLengthResponse(Response.Status.OK, MIME_JSON, json)
@@ -181,11 +181,11 @@ class LocalHttpServer(
      */
     private fun buildMockResponse(): DrugAnalyzeResponse {
         return DrugAnalyzeResponse(
-            success = true,
-            drugName = "测试药物",
-            confidence = 0.95,
-            warningText = "这是手机端返回的测试结果",
-            needConfirm = true
+            success           = true,
+            drugName          = "测试药物",
+            usage             = "温水送服",
+            dosage            = "一日三次，每次一片",
+            contraindications = "不宜空腹服用，不宜与阿司匹林共服"
         )
     }
 }

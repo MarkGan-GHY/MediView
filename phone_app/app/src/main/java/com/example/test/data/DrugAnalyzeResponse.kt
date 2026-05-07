@@ -7,16 +7,16 @@ package com.example.test.data
  * 只需在 [com.example.test.server.LocalHttpServer] 中替换构造逻辑，
  * 本数据类无需修改。
  *
- * @param success      请求是否成功处理
- * @param drugName     识别出的药物名称
- * @param confidence   识别置信度，0.0 ~ 1.0
- * @param warningText  给用户的提示或警告信息
- * @param needConfirm  是否需要用户二次确认（如剂量风险时为 true）
+ * @param success            请求是否成功处理
+ * @param drugName           识别出的药物名称
+ * @param usage              用法（如"温水送服"、"擦拭于创口处"）
+ * @param dosage             用量（如"一日三次，每次一片"）
+ * @param contraindications  禁忌（如"不宜空腹服用"、"不宜与阿司匹林共服"）
  */
 data class DrugAnalyzeResponse(
     val success: Boolean,
     val drugName: String,
-    val confidence: Double,
-    val warningText: String,
-    val needConfirm: Boolean
+    val usage: String,
+    val dosage: String,
+    val contraindications: String
 )

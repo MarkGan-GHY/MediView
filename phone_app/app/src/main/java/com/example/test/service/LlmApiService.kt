@@ -41,8 +41,9 @@ class LlmApiService(private val repository: NetworkRepository) {
          */
         private const val JSON_FORMAT_INSTRUCTION = "\n\n" +
             "请严格以如下 JSON 格式返回，不要包含任何其他文字或 Markdown 标记：\n" +
-            "{\"drugName\":\"药物名称\",\"confidence\":0.9," +
-            "\"warningText\":\"注意事项摘要（100字以内）\",\"needConfirm\":false}"
+            "{\"drugName\":\"药物名称\",\"usage\":\"用法（如温水送服、擦拭于创口处）\"," +
+            "\"dosage\":\"用量（如一日三次，每次一片）\"," +
+            "\"contraindications\":\"禁忌（如不宜空腹服用、不宜与阿司匹林共服）\"}"
 
         private val JSON_MEDIA_TYPE = "application/json".toMediaType()
     }
@@ -95,9 +96,9 @@ class LlmApiService(private val repository: NetworkRepository) {
             }
             val elapsed = "%.1f".format((System.currentTimeMillis() - startMs) / 1000.0)
             if (result.success) {
-                onLog("识别完成，耗时 ${elapsed}s：${result.drugName}（置信度 ${"%.0f".format(result.confidence * 100)}%）", "INFO")
+                onLog("识别完成，耗时 ${elapsed}s：${result.drugName}", "INFO")
             } else {
-                onLog("大模型返回失败：${result.warningText}", "ERROR")
+                onLog("大模型返回失败：${result.contraindications}", "ERROR")
             }
             result
         } catch (e: Exception) {
@@ -289,29 +290,29 @@ class LlmApiService(private val repository: NetworkRepository) {
         return try {
             val obj = gson.fromJson(cleaned, JsonObject::class.java)
             DrugAnalyzeResponse(
-                success     = true,
-                drugName    = obj.get("drugName")?.asString    ?: "未知药物",
-                confidence  = obj.get("confidence")?.asDouble  ?: 0.8,
-                warningText = obj.get("warningText")?.asString ?: "",
-                needConfirm = obj.get("needConfirm")?.asBoolean ?: false
+                success           = true,
+                drugName          = obj.get("drugName")?.asString          ?: "未知药物",
+                usage             = obj.get("usage")?.asString             ?: "请遵医嘱",
+                dosage            = obj.get("dosage")?.asString            ?: "请遵医嘱",
+                contraindications = obj.get("contraindications")?.asString ?: "暂无"
             )
         } catch (e: Exception) {
             Log.w(TAG, "模型输出 JSON 解析失败，降级为纯文本: ${text.take(200)}")
             DrugAnalyzeResponse(
-                success     = true,
-                drugName    = "识别完成",
-                confidence  = 0.7,
-                warningText = text.take(300),
-                needConfirm = true
+                success           = true,
+                drugName          = "识别完成",
+                usage             = "请查看原始输出",
+                dosage            = "请查看原始输出",
+                contraindications = text.take(300)
             )
         }
     }
 
     private fun errorResponse(message: String) = DrugAnalyzeResponse(
-        success     = false,
-        drugName    = "",
-        confidence  = 0.0,
-        warningText = message,
-        needConfirm = false
+        success           = false,
+        drugName          = "",
+        usage             = "",
+        dosage            = "",
+        contraindications = message
     )
 }

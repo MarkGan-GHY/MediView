@@ -430,10 +430,10 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
 
                 DrugResponse.Success(
                     DrugResult(
-                        drugName    = json.getString("drugName"),
-                        confidence  = json.getDouble("confidence"),
-                        warningText = json.getString("warningText"),
-                        needConfirm = json.getBoolean("needConfirm")
+                        drugName          = json.getString("drugName"),
+                        usage             = json.getString("usage"),
+                        dosage            = json.getString("dosage"),
+                        contraindications = json.getString("contraindications")
                     )
                 )
             } catch (e: java.net.ConnectException) {
@@ -458,9 +458,9 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
     /** 响应数据类，对应手机端返回的 JSON 字段 */
     data class DrugResult(
         val drugName: String,
-        val confidence: Double,
-        val warningText: String,
-        val needConfirm: Boolean
+        val usage: String,
+        val dosage: String,
+        val contraindications: String
     )
 
     /** 网络请求结果：成功或各类失败 */
@@ -523,11 +523,12 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
                     val result = response.result
                     // ★ 双目同时显示结果
                     mBindingPair.updateView {
-                        tvStatus.visibility   = View.GONE
-                        resultCard.visibility = View.VISIBLE
-                        tvDrugName.text       = result.drugName
-                        tvConfidence.text     = "置信度：${"%.0f".format(result.confidence * 100)}%"
-                        tvWarning.text        = result.warningText
+                        tvStatus.visibility        = View.GONE
+                        resultCard.visibility      = View.VISIBLE
+                        tvDrugName.text            = result.drugName
+                        tvUsage.text               = "用法：${result.usage}"
+                        tvDosage.text              = "用量：${result.dosage}"
+                        tvContraindications.text   = "禁忌：${result.contraindications}"
                     }
                 }
             }
