@@ -55,6 +55,9 @@ dependencies {
     // JSON 序列化：依赖小，无需 Kotlin 序列化编译器插件
     implementation(libs.gson)
 
+    //gson
+    implementation("com.google.code.gson:gson:2.10.1")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

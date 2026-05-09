@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavHostController
@@ -29,8 +30,11 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.test.ui.theme.TestTheme
 
+
 sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     object Service : Screen("service", "服务", Icons.Default.Email)
+    // ⬇️ 新增這一行
+    object Reminder : Screen("reminder", "服药提醒", Icons.Default.Notifications)
     object Network : Screen("network", "网络设置", Icons.Default.Info)
 }
 
@@ -79,6 +83,7 @@ fun MainScreen() {
             modifier = Modifier.padding(padding)
         ) {
             composable(Screen.Service.route) { ServiceScreen() }
+            composable(Screen.Reminder.route){ ReminderScreen()}
             composable(Screen.Network.route) { NetworkScreen() }
         }
     }
@@ -86,7 +91,7 @@ fun MainScreen() {
 
 @Composable
 fun BottomNavigationBar(navController: NavHostController) {
-    val items = listOf(Screen.Service, Screen.Network)
+    val items = listOf(Screen.Service,Screen.Reminder, Screen.Network)
     NavigationBar {
         val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
         items.forEach { screen ->
