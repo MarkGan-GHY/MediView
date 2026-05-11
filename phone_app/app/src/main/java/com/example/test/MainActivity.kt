@@ -28,12 +28,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.test.ui.reminder.ReminderScreen
 import com.example.test.ui.theme.TestTheme
-
 
 sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     object Service : Screen("service", "服务", Icons.Default.Email)
-    // ⬇️ 新增這一行
     object Reminder : Screen("reminder", "服药提醒", Icons.Default.Notifications)
     object Network : Screen("network", "网络设置", Icons.Default.Info)
 }
@@ -83,7 +82,7 @@ fun MainScreen() {
             modifier = Modifier.padding(padding)
         ) {
             composable(Screen.Service.route) { ServiceScreen() }
-            composable(Screen.Reminder.route){ ReminderScreen()}
+            composable(Screen.Reminder.route) { ReminderScreen() }
             composable(Screen.Network.route) { NetworkScreen() }
         }
     }

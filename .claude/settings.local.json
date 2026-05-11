@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod +w \"D:/Android/Android Project/MediView/phone_app/app/src/main/java/com/example/test/ReminderScreen.kt\")",
+      "Bash(git -C \"D:/Android/Android Project/MediView\" status --short)"
+    ]
+  }
+}
