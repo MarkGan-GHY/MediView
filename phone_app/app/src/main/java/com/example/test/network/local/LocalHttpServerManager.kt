@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.example.test.server.LocalHttpServer
 import com.example.test.service.LlmApiService
+import kotlinx.coroutines.CoroutineScope
 
 /**
  * 封装 [LocalHttpServer]，提供清晰的 start/stop 接口。
@@ -14,6 +15,7 @@ class LocalHttpServerManager(
     private val context: Context,
     private val port: Int,
     private val llmApiService: LlmApiService?,
+    private val analyzeScope: CoroutineScope,
     private val onRequestReceived: (imageSize: Int, savePath: String) -> Unit,
     private val onLogEvent: (message: String, level: String) -> Unit = { _, _ -> }
 ) {
@@ -40,6 +42,7 @@ class LocalHttpServerManager(
                 context = context,
                 port = port,
                 llmApiService = llmApiService,
+                analyzeScope = analyzeScope,
                 onRequestReceived = onRequestReceived,
                 onLogEvent = onLogEvent
             )

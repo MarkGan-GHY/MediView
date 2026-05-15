@@ -32,6 +32,7 @@ class PhoneBridgeServiceController(
     private val context: Context,
     port: Int,
     llmApiService: LlmApiService?,
+    analyzeScope: CoroutineScope,
     onRequestReceived: (imageSize: Int, savePath: String) -> Unit,
     private val onLogEvent: (message: String, level: String) -> Unit = { _, _ -> }
 ) {
@@ -47,7 +48,7 @@ class PhoneBridgeServiceController(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main + exceptionHandler)
 
     private val httpManager = LocalHttpServerManager(
-        context, port, llmApiService, onRequestReceived, onLogEvent
+        context, port, llmApiService, analyzeScope, onRequestReceived, onLogEvent
     )
     private val nsdPublisher = NsdServicePublisher(context)
     private val udpBeacon = UdpServiceBeacon(context)

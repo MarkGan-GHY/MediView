@@ -9,9 +9,8 @@ import fi.iki.elonen.NanoHTTPD
 import java.io.File
 import java.io.IOException
 import com.example.test.service.LlmApiService
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * 手机端本地 HTTP 服务器。
@@ -33,6 +32,8 @@ class LocalHttpServer(
     port: Int,
     /** 真实大模型调用服务；传 null 时回退到模拟数据（方便无配置时测试）*/
     private val llmApiService: LlmApiService? = null,
+    /** 承载异步 LLM 调用的协程作用域，由 HttpServerService 注入并在服务停止时 cancel */
+    private val analyzeScope: CoroutineScope,
     /** 每次收到请求时的回调，用于向 UI 层广播事件（在子线程调用） */
     private val onRequestReceived: (imageSize: Int, savePath: String) -> Unit,
     /** 日志回调 (message, level)，由上层广播到 UI */
@@ -42,6 +43,7 @@ class LocalHttpServer(
     companion object {
         private const val TAG = "LocalHttpServer"
         private const val ROUTE_ANALYZE = "/analyzeDrug"
+        private const val ROUTE_ANALYZE_RESULT = "/analyzeResult"
         private const val ROUTE_PENDING_REMINDERS = "/pendingReminders"
         private const val ROUTE_ACK_REMINDER = "/ackReminder"
         private const val MIME_JSON = "application/json"
@@ -63,6 +65,9 @@ class LocalHttpServer(
         return when {
             session.method == Method.POST && session.uri == ROUTE_ANALYZE -> {
                 handleAnalyzeDrug(session)
+            }
+            session.method == Method.GET && session.uri == ROUTE_ANALYZE_RESULT -> {
+                handleAnalyzeResult(session)
             }
             session.method == Method.GET && session.uri == ROUTE_PENDING_REMINDERS -> {
                 handlePendingReminders()
@@ -116,15 +121,15 @@ class LocalHttpServer(
     }
 
     /**
-     * 处理 POST /analyzeDrug 请求。
+     * 处理 POST /analyzeDrug 请求（异步任务模式）。
      *
-     * 图片接收方式：
-     * NanoHTTPD 在 parseBody() 调用前不会读取 body，调用后：
-     * - 对于 multipart/form-data：文件会被写入临时文件，通过 files map 取出路径
-     * - 对于 application/octet-stream / image/jpeg（直接传二进制）：
-     *   body 数据在 inputStream 中，需手动按 content-length 读取
+     * 协议变更（异步两段式）：
+     *  - 本接口立刻返回 `{success:true, taskId:"uuid"}`，不再等待 LLM
+     *  - LLM 调用在 [analyzeScope] 中后台执行，结果写入 [AnalyzeTaskStore]
+     *  - 眼镜端通过 GET /analyzeResult?taskId=xxx 轮询拿结果
      *
-     * 眼镜端发送 image/jpeg 时采用直接传二进制方式，此处使用 inputStream 读取。
+     * 这样设计的原因：LLM 偶发慢响应（>15s）会让眼镜端 OkHttp 先超时丢弃结果，
+     * 异步化后眼镜端短超时即可，等待过程通过轮询接口持续进行。
      */
     private fun handleAnalyzeDrug(session: IHTTPSession): Response {
         return try {
@@ -140,33 +145,41 @@ class LocalHttpServer(
             val sizeKb = "%.1f".format(imageBytes.size / 1024.0)
             onLogEvent("收到图片 ${sizeKb}KB（${imageBytes.size}B）", "INFO")
 
-            // 保存到缓存目录，便于 adb pull 调试，后续可删除此步骤
+            // 保存到缓存目录，便于 adb pull 调试
             val savedPath = saveImageToCache(imageBytes)
             val fileName = savedPath.substringAfterLast('/')
             Log.i(TAG, "图片已保存: $savedPath")
             onLogEvent("图片已保存：$fileName", "INFO")
 
-            // 通知 UI 层（在工作线程，UI 层需切换到主线程更新）
             onRequestReceived(imageBytes.size, savedPath)
 
-            // 调用大模型（有配置时）或返回模拟数据（无配置时）
-            val response = if (llmApiService != null) {
-                runBlocking(Dispatchers.IO) {
-                    llmApiService.analyze(imageBytes, onLog = onLogEvent)
+            val taskId = AnalyzeTaskStore.submit()
+            onLogEvent("创建识别任务：${taskId.take(8)}", "INFO")
+
+            // 后台执行 LLM 调用；NanoHTTPD 请求线程立刻返回 taskId 给眼镜端
+            analyzeScope.launch {
+                val response = try {
+                    if (llmApiService != null) {
+                        llmApiService.analyze(imageBytes, onLog = onLogEvent)
+                    } else {
+                        onLogEvent("未配置大模型，使用模拟数据", "WARN")
+                        buildMockResponse()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "LLM 调用异常", e)
+                    onLogEvent("识别异常：${e.message}", "ERROR")
+                    AnalyzeTaskStore.markError(taskId, e.message ?: e.javaClass.simpleName)
+                    return@launch
                 }
-            } else {
-                onLogEvent("未配置大模型，使用模拟数据", "WARN")
-                buildMockResponse()
-            }
-            val json = gson.toJson(response)
-            Log.i(TAG, "返回结果: $json")
-
-            if (response.success) {
-                onLogEvent("返回结果给眼镜：${response.drugName}", "INFO")
-            } else {
-                onLogEvent("返回错误响应给眼镜：${response.contraindications}", "ERROR")
+                AnalyzeTaskStore.markDone(taskId, response)
+                if (response.success) {
+                    onLogEvent("识别完成：${response.drugName}（任务 ${taskId.take(8)}）", "INFO")
+                } else {
+                    onLogEvent("识别失败：${response.contraindications}", "ERROR")
+                }
             }
 
+            val json = gson.toJson(mapOf("success" to true, "taskId" to taskId))
             newFixedLengthResponse(Response.Status.OK, MIME_JSON, json)
 
         } catch (e: IOException) {
@@ -178,6 +191,65 @@ class LocalHttpServer(
                 """{"success":false,"error":"服务器内部错误: ${e.message}"}"""
             )
         }
+    }
+
+    /**
+     * GET /analyzeResult?taskId=xxx
+     *
+     * 返回结构：
+     *  - 任务不存在：`{"success":false,"error":"taskId 不存在或已过期"}`
+     *  - RUNNING：`{"success":true,"status":"running","elapsedMs":12345}`
+     *  - DONE：   `{"success":true,"status":"done","drugName":..,"usage":..,"dosage":..,"contraindications":..}`
+     *  - ERROR：  `{"success":true,"status":"error","error":"..."}`
+     */
+    private fun handleAnalyzeResult(session: IHTTPSession): Response {
+        val taskId = session.parameters["taskId"]?.firstOrNull()
+        if (taskId.isNullOrBlank()) {
+            return newFixedLengthResponse(
+                Response.Status.BAD_REQUEST,
+                MIME_JSON,
+                """{"success":false,"error":"缺少 taskId 参数"}"""
+            )
+        }
+        val task = AnalyzeTaskStore.get(taskId)
+            ?: return newFixedLengthResponse(
+                Response.Status.OK,
+                MIME_JSON,
+                """{"success":false,"error":"taskId 不存在或已过期"}"""
+            )
+
+        val body: Map<String, Any?> = when (task.status) {
+            AnalyzeTaskStore.Status.RUNNING -> mapOf(
+                "success" to true,
+                "status" to "running",
+                "elapsedMs" to (System.currentTimeMillis() - task.startMs)
+            )
+            AnalyzeTaskStore.Status.DONE -> {
+                val r = task.result
+                if (r != null && r.success) {
+                    mapOf(
+                        "success" to true,
+                        "status" to "done",
+                        "drugName" to r.drugName,
+                        "usage" to r.usage,
+                        "dosage" to r.dosage,
+                        "contraindications" to r.contraindications
+                    )
+                } else {
+                    mapOf(
+                        "success" to true,
+                        "status" to "error",
+                        "error" to (r?.contraindications ?: "识别失败")
+                    )
+                }
+            }
+            AnalyzeTaskStore.Status.ERROR -> mapOf(
+                "success" to true,
+                "status" to "error",
+                "error" to (task.error ?: "未知错误")
+            )
+        }
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, gson.toJson(body))
     }
 
     /**

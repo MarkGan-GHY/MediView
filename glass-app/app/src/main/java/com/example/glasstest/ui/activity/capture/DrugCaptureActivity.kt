@@ -76,9 +76,11 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
     private var openTime = -1L
 
     // ──────────────── 网络相关 ────────────────
+    // 协议异步化后单次请求都是秒级响应（submit 返回 taskId、poll 返回当前状态），
+    // 短超时即可。LLM 慢响应在轮询过程中等待，不靠 HTTP 长连接顶。
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
         .build()
 
     // NSD 服务发现，动态获取手机 host:port
@@ -341,6 +343,13 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
 
     companion object {
         private const val CAMERA_PERMISSION_REQUEST = 100
+
+        /** 轮询识别结果的间隔；与手机端 LLM 实际耗时匹配，1s 反馈足够流畅 */
+        private const val POLL_INTERVAL_MS = 1000L
+        /** 单次识别最长等待时间，超过则放弃 */
+        private const val POLL_TIMEOUT_MS = 90_000L
+        /** 连续多少次轮询网络失败才放弃，防止短暂抖动误判 */
+        private const val MAX_POLL_FAILURES = 3
     }
 
     // ════════════════════════════════════════
@@ -391,69 +400,146 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
     // ════════════════════════════════════════
 
     /**
-     * 将 JPEG 字节数组 POST 到手机服务，返回解析后的识别结果。
-     * suspend fun，内部切换到 IO 线程，调用方无需处理线程。
-     * 返回 null 表示网络异常或服务端出错。
+     * 异步识别协议：
+     *  1. submitAnalyze(): POST /analyzeDrug 上传图片，立刻拿到 taskId
+     *  2. pollAnalyzeResult(taskId): 每 1s GET /analyzeResult?taskId=xxx，直到 done/error 或超时
+     *
+     * 轮询过程中通过 onProgress 回调向 UI 反馈"识别中…Ns"。
      */
-    private suspend fun sendToPhone(jpegBytes: ByteArray): DrugResponse =
-        withContext(Dispatchers.IO) {
-            val host = phoneHost
-            if (host == null) {
-                return@withContext DrugResponse.Failure("尚未发现手机服务，请稍候")
+    private suspend fun sendToPhone(
+        jpegBytes: ByteArray,
+        onProgress: (elapsedSec: Long) -> Unit = {}
+    ): DrugResponse = withContext(Dispatchers.IO) {
+        val host = phoneHost ?: return@withContext DrugResponse.Failure("尚未发现手机服务，请稍候")
+        val port = phonePort
+
+        val submitResult = submitAnalyze(host, port, jpegBytes)
+        val taskId = when (submitResult) {
+            is SubmitResult.Failure -> return@withContext submitResult.response
+            is SubmitResult.Success -> submitResult.taskId
+        }
+        Log.i(TAG, "任务已提交: taskId=$taskId")
+
+        pollAnalyzeResult(host, port, taskId, onProgress)
+    }
+
+    private sealed class SubmitResult {
+        data class Success(val taskId: String) : SubmitResult()
+        data class Failure(val response: DrugResponse) : SubmitResult()
+    }
+
+    private fun submitAnalyze(host: String, port: Int, jpegBytes: ByteArray): SubmitResult {
+        val url = "http://$host:$port/analyzeDrug"
+        return try {
+            Log.d(TAG, "提交识别请求: url=$url, 图片字节=${jpegBytes.size}")
+            val body = jpegBytes.toRequestBody("image/jpeg".toMediaType())
+            val request = Request.Builder().url(url).post(body).build()
+            val response = httpClient.newCall(request).execute()
+            if (!response.isSuccessful) {
+                return SubmitResult.Failure(
+                    DrugResponse.Failure("服务端错误 (${response.code})，请检查手机服务")
+                )
             }
-            val url = "http://$host:$phonePort/analyzeDrug"
-            try {
-                Log.d(TAG, "HTTP请求发送: url=$url, 图片字节大小=${jpegBytes.size}")
-                val body = jpegBytes.toRequestBody("image/jpeg".toMediaType())
-                val request = Request.Builder()
-                    .url(url)
-                    .post(body)
-                    .build()
+            val json = JSONObject(response.body!!.string())
+            if (!json.getBoolean("success")) {
+                return SubmitResult.Failure(
+                    DrugResponse.Failure("提交失败：${json.optString("error", "未知原因")}")
+                )
+            }
+            SubmitResult.Success(json.getString("taskId"))
+        } catch (e: java.net.ConnectException) {
+            Log.e(TAG, "提交连接失败: ${e.message}")
+            SubmitResult.Failure(
+                DrugResponse.NetworkFailure("网络连接失败，请确认手机热点已开启且服务正在运行")
+            )
+        } catch (e: java.net.SocketTimeoutException) {
+            Log.e(TAG, "提交超时: ${e.message}")
+            SubmitResult.Failure(DrugResponse.NetworkFailure("提交超时，手机服务可能未启动"))
+        } catch (e: Exception) {
+            Log.e(TAG, "提交异常: ${e.javaClass.simpleName}: ${e.message}")
+            SubmitResult.Failure(DrugResponse.Failure("提交失败：${e.message}"))
+        }
+    }
 
-                val response = httpClient.newCall(request).execute()
-                Log.d(TAG, "HTTP响应结果: code=${response.code}")
+    private suspend fun pollAnalyzeResult(
+        host: String,
+        port: Int,
+        taskId: String,
+        onProgress: (elapsedSec: Long) -> Unit
+    ): DrugResponse {
+        val startMs = System.currentTimeMillis()
+        var consecutiveFailures = 0
+        while (true) {
+            val elapsedMs = System.currentTimeMillis() - startMs
+            if (elapsedMs > POLL_TIMEOUT_MS) {
+                return DrugResponse.NetworkFailure("识别超时（${POLL_TIMEOUT_MS / 1000}s），请重试")
+            }
+            onProgress(elapsedMs / 1000)
 
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "HTTP错误: ${response.code}")
-                    return@withContext DrugResponse.Failure("服务端错误 (${response.code})，请检查手机服务")
+            val outcome = pollOnce(host, port, taskId)
+            when (outcome) {
+                is PollOutcome.Running -> {
+                    consecutiveFailures = 0
+                    delay(POLL_INTERVAL_MS)
                 }
-
-                val jsonStr = response.body!!.string()
-                Log.d(TAG, "JSON解析结果: $jsonStr")
-                val json = JSONObject(jsonStr)
-
-                if (!json.getBoolean("success")) {
-                    val err = json.optString("error", "未知原因")
-                    Log.e(TAG, "服务端识别失败: $err")
-                    return@withContext DrugResponse.Failure("识别失败：$err")
+                is PollOutcome.Done -> return DrugResponse.Success(outcome.result)
+                is PollOutcome.Error -> return DrugResponse.Failure("识别失败：${outcome.error}")
+                is PollOutcome.NetworkFailure -> {
+                    consecutiveFailures++
+                    Log.w(TAG, "轮询网络异常 ($consecutiveFailures/$MAX_POLL_FAILURES): ${outcome.reason}")
+                    if (consecutiveFailures >= MAX_POLL_FAILURES) {
+                        return DrugResponse.NetworkFailure("网络不稳定，请检查连接后重试")
+                    }
+                    delay(POLL_INTERVAL_MS)
                 }
+            }
+        }
+        @Suppress("UNREACHABLE_CODE")
+        return DrugResponse.Failure("轮询逻辑异常")
+    }
 
-                DrugResponse.Success(
+    private sealed class PollOutcome {
+        object Running : PollOutcome()
+        data class Done(val result: DrugResult) : PollOutcome()
+        data class Error(val error: String) : PollOutcome()
+        data class NetworkFailure(val reason: String) : PollOutcome()
+    }
+
+    private fun pollOnce(host: String, port: Int, taskId: String): PollOutcome {
+        val url = "http://$host:$port/analyzeResult?taskId=$taskId"
+        return try {
+            val request = Request.Builder().url(url).get().build()
+            val response = httpClient.newCall(request).execute()
+            if (!response.isSuccessful) {
+                return PollOutcome.NetworkFailure("HTTP ${response.code}")
+            }
+            val json = JSONObject(response.body!!.string())
+            if (!json.optBoolean("success", false)) {
+                return PollOutcome.Error(json.optString("error", "未知错误"))
+            }
+            when (json.optString("status")) {
+                "running" -> PollOutcome.Running
+                "done" -> PollOutcome.Done(
                     DrugResult(
-                        drugName          = json.getString("drugName"),
-                        usage             = json.getString("usage"),
-                        dosage            = json.getString("dosage"),
+                        drugName = json.getString("drugName"),
+                        usage = json.getString("usage"),
+                        dosage = json.getString("dosage"),
                         contraindications = json.getString("contraindications")
                     )
                 )
-            } catch (e: java.net.ConnectException) {
-                Log.e(TAG, "连接失败: ${e.message}")
-                DrugResponse.NetworkFailure("网络连接失败，请确认手机热点已开启且服务正在运行")
-            } catch (e: java.net.SocketTimeoutException) {
-                Log.e(TAG, "请求超时: ${e.message}")
-                val msg = if (e.message?.contains("connect") == true)
-                    "连接超时（5s），手机服务端可能未启动"
-                else
-                    "读取超时（15s），手机服务端处理过慢或无响应"
-                DrugResponse.NetworkFailure(msg)
-            } catch (e: org.json.JSONException) {
-                Log.e(TAG, "JSON解析异常: ${e.message}")
-                DrugResponse.Failure("返回数据格式错误，请检查手机服务版本")
-            } catch (e: Exception) {
-                Log.e(TAG, "未知异常: ${e.javaClass.simpleName}: ${e.message}")
-                DrugResponse.Failure("未知错误：${e.message}")
+                "error" -> PollOutcome.Error(json.optString("error", "识别失败"))
+                else -> PollOutcome.NetworkFailure("未知 status")
             }
+        } catch (e: java.net.ConnectException) {
+            PollOutcome.NetworkFailure("connect: ${e.message}")
+        } catch (e: java.net.SocketTimeoutException) {
+            PollOutcome.NetworkFailure("timeout: ${e.message}")
+        } catch (e: org.json.JSONException) {
+            PollOutcome.NetworkFailure("json: ${e.message}")
+        } catch (e: Exception) {
+            PollOutcome.NetworkFailure("${e.javaClass.simpleName}: ${e.message}")
         }
+    }
 
     /** 响应数据类，对应手机端返回的 JSON 字段 */
     data class DrugResult(
@@ -496,8 +582,14 @@ class DrugCaptureActivity : BaseMirrorActivity<ActivityDrugCaptureBinding>() {
             // Bitmap → JPEG（IO 线程）
             val jpegBytes = withContext(Dispatchers.IO) { bitmap.toJpegBytes(85) }
 
-            // HTTP POST（IO 线程，sendToPhone 内部已切换）
-            val response = sendToPhone(jpegBytes)
+            // 异步识别：submit → poll，期间持续更新 UI
+            val response = sendToPhone(jpegBytes) { elapsedSec ->
+                runOnUiThread {
+                    mBindingPair.updateView {
+                        tvStatus.text = "识别中…${elapsedSec}s"
+                    }
+                }
+            }
             isProcessing = false
 
             when (response) {

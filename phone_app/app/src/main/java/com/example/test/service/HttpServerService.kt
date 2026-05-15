@@ -16,6 +16,10 @@ import com.example.test.MainActivity
 import com.example.test.R
 import com.example.test.data.NetworkRepository
 import com.example.test.network.local.PhoneBridgeServiceController
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 
 /**
  * HTTP 服务的宿主：Android 前台服务。
@@ -61,6 +65,9 @@ class HttpServerService : Service() {
     private val repository by lazy { NetworkRepository(applicationContext) }
     private val llmApiService by lazy { LlmApiService(repository) }
 
+    // 承载异步识别任务，独立于 NanoHTTPD 请求线程；服务销毁时 cancel 所有进行中的 LLM 调用
+    private var analyzeScope: CoroutineScope? = null
+
     // -------------------------------------------------------------------------
     // 生命周期
     // -------------------------------------------------------------------------
@@ -88,6 +95,8 @@ class HttpServerService : Service() {
         super.onDestroy()
         controller?.stop()
         controller = null
+        analyzeScope?.cancel()
+        analyzeScope = null
         ServerStateHolder.setRunning(false)
         ServerStateHolder.addLog("服务已销毁", LogLevel.WARN)
         Log.i(TAG, "HttpServerService 销毁，服务已停止")
@@ -113,10 +122,14 @@ class HttpServerService : Service() {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING
         )
 
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        analyzeScope = scope
+
         controller = PhoneBridgeServiceController(
             context = applicationContext,
             port = SERVER_PORT,
             llmApiService = llmApiService,
+            analyzeScope = scope,
             onRequestReceived = { imageSize, savePath ->
                 broadcastRequestReceived(imageSize, savePath)
             },
@@ -133,6 +146,8 @@ class HttpServerService : Service() {
     private fun stopServer() {
         controller?.stop()
         controller = null
+        analyzeScope?.cancel()
+        analyzeScope = null
         Log.i(TAG, "服务已手动停止")
         ServerStateHolder.setRunning(false)
         ServerStateHolder.addLog("服务已停止")
