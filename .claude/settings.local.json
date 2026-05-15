@@ -2,7 +2,15 @@
   "permissions": {
     "allow": [
       "Bash(chmod +w \"D:/Android/Android Project/MediView/phone_app/app/src/main/java/com/example/test/ReminderScreen.kt\")",
-      "Bash(git -C \"D:/Android/Android Project/MediView\" status --short)"
+      "Bash(git -C \"D:/Android/Android Project/MediView\" status --short)",
+      "WebFetch(domain:rayneo.gitbook.io)",
+      "WebSearch",
+      "WebFetch(domain:docs.anthropic.com)",
+      "WebFetch(domain:www.anthropic.com)",
+      "WebFetch(domain:skywork.ai)",
+      "WebFetch(domain:4087018000-files.gitbook.io)",
+      "Bash(xargs grep -l \"AlarmManager\\\\|WorkManager\\\\|notification\\\\|Notification\")",
+      "Bash(./gradlew :app:compileDebugKotlin)"
     ]
   }
 }

@@ -22,6 +22,11 @@
     <!-- Android 13+ 发送通知需要运行时权限，由 MainActivity 在运行时申请 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 服药提醒精确闹钟：Android 12+ 需 SCHEDULE_EXACT_ALARM（用户可拒绝），
+         Android 13+ 可改用 USE_EXACT_ALARM（无需用户授权但 Play 商店审核更严） -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
     <application
         android:name=".App"
         android:allowBackup="true"
@@ -53,6 +58,11 @@
             android:name=".service.HttpServerService"
             android:exported="false"
             android:foregroundServiceType="remoteMessaging" />
+
+        <!-- 服药提醒闹钟接收器：AlarmManager 触发后处理入队和重排 -->
+        <receiver
+            android:name=".reminder.ReminderAlarmReceiver"
+            android:exported="false" />
 
     </application>
 

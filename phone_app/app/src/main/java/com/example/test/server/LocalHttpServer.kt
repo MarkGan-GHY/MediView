@@ -3,6 +3,7 @@ package com.example.test.server
 import android.content.Context
 import android.util.Log
 import com.example.test.data.DrugAnalyzeResponse
+import com.example.test.reminder.ReminderPushQueue
 import com.google.gson.Gson
 import fi.iki.elonen.NanoHTTPD
 import java.io.File
@@ -41,6 +42,8 @@ class LocalHttpServer(
     companion object {
         private const val TAG = "LocalHttpServer"
         private const val ROUTE_ANALYZE = "/analyzeDrug"
+        private const val ROUTE_PENDING_REMINDERS = "/pendingReminders"
+        private const val ROUTE_ACK_REMINDER = "/ackReminder"
         private const val MIME_JSON = "application/json"
         private const val MIME_JPEG = "image/jpeg"
     }
@@ -61,6 +64,12 @@ class LocalHttpServer(
             session.method == Method.POST && session.uri == ROUTE_ANALYZE -> {
                 handleAnalyzeDrug(session)
             }
+            session.method == Method.GET && session.uri == ROUTE_PENDING_REMINDERS -> {
+                handlePendingReminders()
+            }
+            session.method == Method.POST && session.uri == ROUTE_ACK_REMINDER -> {
+                handleAckReminder(session)
+            }
             else -> {
                 newFixedLengthResponse(
                     Response.Status.NOT_FOUND,
@@ -69,6 +78,41 @@ class LocalHttpServer(
                 )
             }
         }
+    }
+
+    /**
+     * GET /pendingReminders
+     * 返回当前队列里待推送的服药提醒消息列表。
+     */
+    private fun handlePendingReminders(): Response {
+        val list = ReminderPushQueue.snapshot(context)
+        val json = gson.toJson(mapOf("success" to true, "reminders" to list))
+        if (list.isNotEmpty()) {
+            onLogEvent("眼镜拉取提醒：${list.size} 条", "INFO")
+        }
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json)
+    }
+
+    /**
+     * POST /ackReminder?messageId=xxx
+     * 眼镜端确认收到并展示后，从队列移除该消息。
+     */
+    private fun handleAckReminder(session: IHTTPSession): Response {
+        val messageId = session.parameters["messageId"]?.firstOrNull()
+        if (messageId.isNullOrBlank()) {
+            return newFixedLengthResponse(
+                Response.Status.BAD_REQUEST,
+                MIME_JSON,
+                """{"success":false,"error":"缺少 messageId 参数"}"""
+            )
+        }
+        val ok = ReminderPushQueue.ack(context, messageId)
+        onLogEvent("眼镜确认提醒：$messageId${if (ok) "" else "（未命中）"}", "INFO")
+        return newFixedLengthResponse(
+            Response.Status.OK,
+            MIME_JSON,
+            """{"success":$ok}"""
+        )
     }
 
     /**

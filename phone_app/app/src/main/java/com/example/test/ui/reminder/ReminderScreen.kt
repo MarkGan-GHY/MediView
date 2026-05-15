@@ -1,5 +1,6 @@
 package com.example.test.ui.reminder
 
+import android.widget.Toast
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
@@ -23,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.test.model.MedicineReminder
+import com.example.test.service.ServerStateHolder
 import com.example.test.viewmodel.ReminderViewModel
 
 @Composable
@@ -98,7 +100,17 @@ fun ReminderScreen() {
                                 viewModel.updateReminderStatus(reminder.id, newState)
                             },
                             onDelete = { reminderToDelete = reminder },
-                            onEdit = { reminderToEdit = reminder }
+                            onEdit = { reminderToEdit = reminder },
+                            onTest = {
+                                viewModel.pushTestReminder(reminder)
+                                val running = ServerStateHolder.isRunning.value
+                                val msg = if (running) {
+                                    "已推送测试提醒：${reminder.name}"
+                                } else {
+                                    "服务未启动，提醒不会被推送"
+                                }
+                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                            }
                         )
                     }
                 }
@@ -159,7 +171,8 @@ fun ReminderCard(
     reminder: MedicineReminder,
     onActiveChange: (Boolean) -> Unit,
     onDelete: () -> Unit,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    onTest: () -> Unit
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -231,27 +244,40 @@ fun ReminderCard(
             )
 
             Spacer(modifier = Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                val weekDays = listOf("一", "二", "三", "四", "五", "六", "日")
-                weekDays.forEachIndexed { index, day ->
-                    val isSelected = reminder.repeatDays.contains(index + 1)
-                    Surface(
-                        shape = MaterialTheme.shapes.small,
-                        color = if (isSelected && reminder.isActive)
-                            MaterialTheme.colorScheme.primaryContainer
-                        else Color.Transparent,
-                        border = if (isSelected) null
-                        else BorderStroke(1.dp, Color.LightGray)
-                    ) {
-                        Text(
-                            text = day,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            fontSize = 12.sp,
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val weekDays = listOf("一", "二", "三", "四", "五", "六", "日")
+                    weekDays.forEachIndexed { index, day ->
+                        val isSelected = reminder.repeatDays.contains(index + 1)
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
                             color = if (isSelected && reminder.isActive)
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            else Color.Gray
-                        )
+                                MaterialTheme.colorScheme.primaryContainer
+                            else Color.Transparent,
+                            border = if (isSelected) null
+                            else BorderStroke(1.dp, Color.LightGray)
+                        ) {
+                            Text(
+                                text = day,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                fontSize = 12.sp,
+                                color = if (isSelected && reminder.isActive)
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                else Color.Gray
+                            )
+                        }
                     }
+                }
+
+                OutlinedButton(
+                    onClick = onTest,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text("测试", fontSize = 14.sp)
                 }
             }
         }

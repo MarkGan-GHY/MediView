@@ -4,19 +4,34 @@ import android.content.Context
 import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.ViewModel
 import com.example.test.model.MedicineReminder
+import com.example.test.model.ReminderMessage
+import com.example.test.reminder.ReminderPushQueue
+import com.example.test.reminder.ReminderScheduler
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
 
 /**
  * 服药提醒 ViewModel，内置旧数据自动迁移逻辑。
+ *
+ * CRUD 操作除了更新内存列表与持久化，还会同步调用 [ReminderScheduler]
+ * 维护 AlarmManager 中的精确闹钟。
  */
 class ReminderViewModel(context: Context) : ViewModel() {
+    private val appContext = context.applicationContext
     private val sharedPreferences =
         context.getSharedPreferences("medicine_prefs", Context.MODE_PRIVATE)
     private val gson = Gson()
     val reminders = mutableStateListOf<MedicineReminder>()
 
-    init { loadFromDisk() }
+    init {
+        loadFromDisk()
+        // 启动时按当前列表重排所有 alarm，覆盖进程被杀后丢失的 PendingIntent
+        ReminderScheduler.rescheduleAll(appContext, reminders.toList())
+    }
 
     // ---------- 持久化 ----------
 
@@ -76,11 +91,13 @@ class ReminderViewModel(context: Context) : ViewModel() {
     fun addReminder(reminder: MedicineReminder) {
         reminders.add(reminder)
         saveToDisk()
+        ReminderScheduler.reschedule(appContext, reminder)
     }
 
     fun deleteReminder(reminder: MedicineReminder) {
         reminders.remove(reminder)
         saveToDisk()
+        ReminderScheduler.cancel(appContext, reminder)
     }
 
     fun updateReminder(updatedReminder: MedicineReminder) {
@@ -88,14 +105,37 @@ class ReminderViewModel(context: Context) : ViewModel() {
         if (index != -1) {
             reminders[index] = updatedReminder
             saveToDisk()
+            ReminderScheduler.reschedule(appContext, updatedReminder)
         }
     }
 
     fun updateReminderStatus(id: Long, isActive: Boolean) {
         val index = reminders.indexOfFirst { it.id == id }
         if (index != -1) {
-            reminders[index] = reminders[index].copy(isActive = isActive)
+            val updated = reminders[index].copy(isActive = isActive)
+            reminders[index] = updated
             saveToDisk()
+            ReminderScheduler.reschedule(appContext, updated)
         }
+    }
+
+    /**
+     * 测试推送：用当前时间作为 scheduledTime，标记 isTest=true，
+     * 跳过队列去重直接入队，等待眼镜端下一次轮询拉取。
+     */
+    fun pushTestReminder(reminder: MedicineReminder) {
+        val now = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+        val message = ReminderMessage(
+            messageId = UUID.randomUUID().toString(),
+            reminderId = reminder.id,
+            name = reminder.name,
+            timesPerDay = reminder.timesPerDay,
+            amount = reminder.amount,
+            unit = reminder.unit,
+            scheduledTime = now,
+            enqueuedAt = System.currentTimeMillis(),
+            isTest = true
+        )
+        ReminderPushQueue.enqueue(appContext, message, bypassDedup = true)
     }
 }

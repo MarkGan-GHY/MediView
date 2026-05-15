@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- 服药提醒轮询服务（前台服务） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".MyApplication"
         android:allowBackup="true"
@@ -38,6 +43,20 @@
             android:exported="false"
             android:label="@string/app_name"
             android:theme="@style/Theme.glass_app" />
+
+        <!-- 服药提醒展示页：由 ReminderPollingService 拉起 -->
+        <activity
+            android:name=".ui.activity.reminder.ReminderActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.glass_app" />
+
+        <!-- 服药提醒轮询前台服务 -->
+        <service
+            android:name=".service.ReminderPollingService"
+            android:exported="false"
+            android:foregroundServiceType="remoteMessaging" />
 
     </application>
 

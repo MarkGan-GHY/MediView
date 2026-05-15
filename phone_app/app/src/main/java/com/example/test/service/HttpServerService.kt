@@ -23,6 +23,11 @@ import com.example.test.network.local.PhoneBridgeServiceController
  * 生命周期：
  *   startForegroundService(ACTION_START) → onCreate → onStartCommand → controller.start()
  *   startService(ACTION_STOP)            → onStartCommand → controller.stop() → stopSelf()
+ *
+ * 抗杀策略：
+ *   - onStartCommand 返回 START_STICKY；系统因内存压力杀掉后会重建，intent 为 null 时默认重启
+ *   - onTaskRemoved 不停服务，用户划掉最近任务不会关闭前台服务
+ *   - UI 状态读取 [ServerStateHolder]，不依赖 Activity/Composable 生命周期
  */
 class HttpServerService : Service() {
 
@@ -66,17 +71,25 @@ class HttpServerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // intent 为 null 表示系统因 START_STICKY 重建本服务，默认恢复运行
         when (intent?.action) {
-            ACTION_START -> startServer()
             ACTION_STOP -> stopServer()
+            else -> startServer()
         }
-        return START_NOT_STICKY
+        return START_STICKY
+    }
+
+    // 用户从最近任务划掉 App 时默认 framework 行为可能停掉服务；显式覆写以保留前台服务存活
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.i(TAG, "onTaskRemoved：任务被划掉，保持前台服务运行")
     }
 
     override fun onDestroy() {
         super.onDestroy()
         controller?.stop()
         controller = null
+        ServerStateHolder.setRunning(false)
+        ServerStateHolder.addLog("服务已销毁", LogLevel.WARN)
         Log.i(TAG, "HttpServerService 销毁，服务已停止")
     }
 
@@ -108,16 +121,21 @@ class HttpServerService : Service() {
                 broadcastRequestReceived(imageSize, savePath)
             },
             onLogEvent = { message, level ->
+                ServerStateHolder.addLog(message, level)
                 broadcastLog(message, level)
             }
         )
         controller!!.start()
+        ServerStateHolder.setRunning(true)
+        ServerStateHolder.addLog("HTTP 服务启动中，端口 $SERVER_PORT...")
     }
 
     private fun stopServer() {
         controller?.stop()
         controller = null
         Log.i(TAG, "服务已手动停止")
+        ServerStateHolder.setRunning(false)
+        ServerStateHolder.addLog("服务已停止")
         broadcastLog("服务已停止")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

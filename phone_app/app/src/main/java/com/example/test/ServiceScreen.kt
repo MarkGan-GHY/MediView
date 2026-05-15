@@ -1,9 +1,6 @@
 package com.example.test
 
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,10 +19,9 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -36,64 +32,22 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.test.service.HttpServerService
+import com.example.test.service.LogLevel
+import com.example.test.service.ServerStateHolder
+import android.content.Intent
 import java.net.NetworkInterface
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-
-enum class LogLevel { INFO, WARN, ERROR }
-data class LogEntry(val text: String, val level: LogLevel = LogLevel.INFO)
 
 @Composable
 fun ServiceScreen() {
     val context = LocalContext.current
 
-    var isServerRunning by remember { mutableStateOf(false) }
+    val isServerRunning by ServerStateHolder.isRunning.collectAsState()
+    val logMessages = ServerStateHolder.logs
     var localIp by remember { mutableStateOf("获取中...") }
-    val logMessages = remember { mutableStateListOf<LogEntry>() }
     val listState = rememberLazyListState()
-
-    fun addLog(text: String, level: LogLevel = LogLevel.INFO) {
-        val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        logMessages.add(0, LogEntry("[$timestamp] $text", level))
-        if (logMessages.size > 100) logMessages.removeAt(logMessages.lastIndex)
-    }
 
     LaunchedEffect(Unit) {
         localIp = getLocalIpAddress()
-    }
-
-    DisposableEffect(Unit) {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context, intent: Intent) {
-                when (intent.action) {
-                    HttpServerService.BROADCAST_REQUEST_RECEIVED -> {
-                        val size = intent.getIntExtra(HttpServerService.EXTRA_IMAGE_SIZE, 0)
-                        val path = intent.getStringExtra(HttpServerService.EXTRA_SAVE_PATH) ?: ""
-                        val fileName = path.substringAfterLast('/')
-                        addLog("收到图片 ${size}B → $fileName")
-                    }
-                    HttpServerService.BROADCAST_LOG_EVENT -> {
-                        val msg = intent.getStringExtra(HttpServerService.EXTRA_LOG_MESSAGE) ?: return
-                        val levelStr = intent.getStringExtra(HttpServerService.EXTRA_LOG_LEVEL) ?: "INFO"
-                        val level = when (levelStr) {
-                            "WARN"  -> LogLevel.WARN
-                            "ERROR" -> LogLevel.ERROR
-                            else    -> LogLevel.INFO
-                        }
-                        addLog(msg, level)
-                    }
-                }
-            }
-        }
-        val filter = IntentFilter().apply {
-            addAction(HttpServerService.BROADCAST_REQUEST_RECEIVED)
-            addAction(HttpServerService.BROADCAST_LOG_EVENT)
-        }
-        ContextCompat.registerReceiver(
-            context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED
-        )
-        onDispose { context.unregisterReceiver(receiver) }
     }
 
     Column(
@@ -113,21 +67,14 @@ fun ServiceScreen() {
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(
-                onClick = {
-                    startHttpServer(context)
-                    isServerRunning = true
-                    addLog("HTTP 服务启动中，端口 ${HttpServerService.SERVER_PORT}...")
-                },
+                onClick = { startHttpServer(context) },
                 enabled = !isServerRunning,
                 modifier = Modifier.weight(1f)
             ) {
                 Text("启动服务")
             }
             Button(
-                onClick = {
-                    stopHttpServer(context)
-                    isServerRunning = false
-                },
+                onClick = { stopHttpServer(context) },
                 enabled = isServerRunning,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error
